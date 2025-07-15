@@ -1,0 +1,27 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'agent_core'
+    static_configs:
+      - targets: ['agent_core:5000']
+
+  - job_name: 'llm_client'
+    static_configs:
+      - targets: ['llm_client:5001']
+
+  - job_name: 'tools'
+    static_configs:
+      - targets: ['tools:5002']
+
+  - job_name: 'memory_manager'
+    static_configs:
+      - targets: ['memory_manager:5003']
+
+  - job_name: 'database'
+    static_configs:
+      - targets: ['database:5004']
+
+  - job_name: 'vault'
+    static_configs:
+      - targets: ['vault:5005']
