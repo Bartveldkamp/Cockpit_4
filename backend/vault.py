@@ -48,3 +48,4 @@ def ensure_vault_exists(session_id: str) -> None:
     Ensures that the session's vault directory exists.
     """
     os.makedirs(get_session_vault_path(session_id), exist_ok=True)
+
