@@ -2,8 +2,13 @@ import asyncio
 import random
 import logging
 from functools import wraps
+from typing import NamedTuple
 
 logger = logging.getLogger(__name__)
+
+class SecurityDecision(NamedTuple):
+    is_safe: bool
+    reasoning: str
 
 def retry_with_backoff(max_retries: int, base_delay: float = 1.0, max_delay: float = 10.0):
     """
