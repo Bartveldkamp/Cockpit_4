@@ -93,6 +93,18 @@ def get_tool_definitions() -> List[Dict[str, Any]]:
             "description": "Lists all files in the session.",
             "parameters": {"type": "object", "properties": {}, "required": []},
         },
+        {
+            "name": "refactor_code",
+            "description": "Reads a file, asks an LLM to refactor it based on a prompt, and writes the result back to the file.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "filename": {"type": "string", "description": "The path to the file to be refactored."},
+                    "refactoring_prompt": {"type": "string", "description": "A clear instruction on how the code should be refactored."}
+                },
+                "required": ["filename", "refactoring_prompt"]
+            },
+        },
     ]
 
 # --- Tool Execution Logic ---
@@ -219,6 +231,49 @@ async def handle_list_files(params: Dict[str, Any], session_id: str, **kwargs) -
         return {"status": "success", "data": "No files in session."}
     return {"status": "success", "data": "\n".join(files)}
 
+async def handle_refactor_code(params: Dict[str, Any], session_id: str, **kwargs) -> Dict[str, Any]:
+    """
+    Handles the logic for reading, refactoring, and writing back a code file.
+    """
+    filename = params.get("filename")
+    refactoring_prompt = params.get("refactoring_prompt")
+
+    if not filename or not refactoring_prompt:
+        return {"status": "error", "message": "Missing 'filename' or 'refactoring_prompt'."}
+
+    # Step 1: Read the existing file content using our other tool's logic
+    read_result = await handle_read_file({"filename": filename}, session_id=session_id)
+    if read_result["status"] == "error":
+        return read_result # Pass the error through
+
+    original_code = read_result["data"]
+
+    # Step 2: Use the code_generation tool logic to perform the refactoring
+    full_prompt = (
+        f"Please refactor the following code based on the instruction provided.\n\n"
+        f"INSTRUCTION: {refactoring_prompt}\n\n"
+        f"ORIGINAL CODE:\n```python\n{original_code}\n```\n\n"
+        f"Respond with ONLY the complete, refactored code. Do not add any commentary or explanations."
+    )
+
+    generation_result = await handle_code_generation({"prompt": full_prompt})
+    if generation_result["status"] == "error":
+        return generation_result
+
+    refactored_code = generation_result["data"]
+
+    # Step 3: Write the refactored code back to the original file
+    write_result = await handle_write_file(
+        {"filename": filename, "content": refactored_code},
+        session_id=session_id
+    )
+
+    # Return the result from the final write operation
+    if write_result["status"] == "success":
+        return {"status": "success", "data": f"Successfully refactored and saved '{filename}'."}
+    else:
+        return write_result
+
 # Dispatch dictionary for tool execution
 TOOL_DISPATCHER = {
     "final_answer": handle_final_answer,
@@ -229,6 +284,7 @@ TOOL_DISPATCHER = {
     "write_file": handle_write_file,
     "read_file": handle_read_file,
     "list_files": handle_list_files,
+    "refactor_code": handle_refactor_code,  # <-- ADD THIS LINE
 }
 
 async def execute_tool(tool: ToolModel, parameters: Dict[str, Any], session_id: str, user_prompt: str) -> Dict[str, Any]:
@@ -238,5 +294,4 @@ async def execute_tool(tool: ToolModel, parameters: Dict[str, Any], session_id: 
         return await TOOL_DISPATCHER[tool_name](parameters, session_id=session_id, user_prompt=user_prompt)
     else:
         return {"status": "error", "message": f"Tool '{tool_name}' not found."}
-
 
