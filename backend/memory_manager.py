@@ -64,3 +64,4 @@ class MemoryManager:
 
 # Create a single, global instance of the MemoryManager
 memory_manager = MemoryManager()
+
