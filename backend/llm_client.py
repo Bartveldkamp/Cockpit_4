@@ -52,13 +52,16 @@ async def get_llm_response(
     temperature: float, top_p: Optional[float] = 1.0, max_tokens: Optional[int] = 4096,
     stop_tokens: Optional[List[str]] = None,
 ) -> str:
-    if provider.lower() != "mistral":
-        raise NotImplementedError("Currently, only the 'mistral' provider is supported.")
+    if provider.lower() not in ["mistral"]:
+        raise NotImplementedError("Currently, only 'mistral' provider is supported.")
 
-    if not settings.mistral_api_key:
+    api_key = settings.mistral_api_key
+    api_url = settings.mistral_api_url
+
+    if not api_key:
         return "API_ERROR: MISTRAL_API_KEY environment variable not set."
 
-    headers = {"Authorization": f"Bearer {settings.mistral_api_key}", "Content-Type": "application/json"}
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     payload = {
         "model": model_name, "messages": messages, "temperature": temperature,
         "top_p": top_p, "max_tokens": max_tokens, "stop": stop_tokens or [],
@@ -68,7 +71,7 @@ async def get_llm_response(
     try:
         # Increased timeout to 300 seconds (5 minutes) for complex tasks.
         async with httpx.AsyncClient(timeout=300.0) as client:
-            response = await client.post(settings.mistral_api_url, headers=headers, json=payload)
+            response = await client.post(api_url, headers=headers, json=payload)
             response.raise_for_status()
 
             data = response.json()
