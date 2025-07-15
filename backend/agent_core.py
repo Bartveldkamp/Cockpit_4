@@ -1,4 +1,16 @@
-# --- EXISTING EXECUTION AGENT (The "Tactician") ---
+import json
+import logging
+from typing import Any, Dict, List
+
+from backend.config import settings
+from backend.memory import memory_manager
+from backend.llm_client import get_llm_response
+from backend.schemas import PlanModel
+from backend.tools import get_tool_definitions, execute_tool, substitute_placeholders
+from backend.utils import parse_json_from_response, plan_sanity_check, validate_plan_semantically
+
+logger = logging.getLogger(__name__)
+
 async def run_agent(
     user_prompt: str, session_id: str, chat_history: list, correlation_id: str = "no-correlation-id"
 ) -> Dict[str, Any]:
@@ -20,13 +32,14 @@ async def run_agent(
         print("\n--- STAGE 0: MEMORY RETRIEVAL ---")
         retrieved_context_list = memory_manager.retrieve_from_memory(user_prompt)
         context_str = "\n\n---\n\n".join(retrieved_context_list)
-        if context_str: logger.info("Injecting retrieved context.")
-        else: logger.info("No relevant context found in memory.")
+        if context_str:
+            logger.info("Injecting retrieved context.")
+        else:
+            logger.info("No relevant context found in memory.")
 
         print(f"\n--- STAGE 1: PLAN GENERATION (Attempt {attempt + 1}/{max_retries}) ---")
         tool_schemas_str = json.dumps(get_tool_definitions(), indent=2)
 
-        # This is the final, most specific system prompt
         planning_system_prompt = (
             "You are a tactical AI agent. Your only job is to take a single, simple, concrete task and create a JSON plan to execute it using the available tools. "
             "Your output MUST be a JSON object with a 'plan' key.\n\n"
@@ -57,7 +70,7 @@ async def run_agent(
         planning_messages = [{"role": "system", "content": planning_system_prompt}, {"role": "user", "content": user_prompt}]
 
         llm_plan_response_str = await get_llm_response(
-            provider="mistral", model_name="mistral-large-latest", messages=planning_messages,
+            provider="mistral", model_name=settings.mistral_model, messages=planning_messages,
             temperature=0.0, top_p=1.0, max_tokens=4096
         )
         parsed_data = parse_json_from_response(llm_plan_response_str)
@@ -66,16 +79,12 @@ async def run_agent(
         if "content" in parsed_data:
             return {"response": parsed_data["content"], "full_history": full_history}
 
-        # This is the new, corrected code block
         try:
-            # First, try to validate the structure as is (e.g., {"plan": [...]})
             plan = PlanModel(**parsed_data).plan
         except ValidationError:
             try:
-                # If that fails, assume the LLM gave a raw list and wrap it
                 plan = PlanModel(plan=parsed_data).plan
             except ValidationError as e:
-                # If both fail, then it's a real error
                 logger.error(f"Pydantic validation failed on both attempts: {e}")
                 return {"response": f"Invalid plan structure: {e}", "full_history": full_history}
 
