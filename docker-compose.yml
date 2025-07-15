@@ -1,0 +1,54 @@
+version: '3.8'
+
+services:
+  agent_core:
+    build: ./backend
+    ports:
+      - "5000:5000"
+    environment:
+      - MISTRAL_API_KEY=${MISTRAL_API_KEY}
+    depends_on:
+      - llm_client
+      - tools
+      - memory_manager
+      - database
+      - vault
+
+  llm_client:
+    build: ./backend
+    ports:
+      - "5001:5001"
+    environment:
+      - MISTRAL_API_KEY=${MISTRAL_API_KEY}
+
+  tools:
+    build: ./backend
+    ports:
+      - "5002:5002"
+
+  memory_manager:
+    build: ./backend
+    ports:
+      - "5003:5003"
+
+  database:
+    build: ./backend
+    ports:
+      - "5004:5004"
+
+  vault:
+    build: ./backend
+    ports:
+      - "5005:5005"
+
+  prometheus:
+    image: prom/prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+
+  grafana:
+    image: grafana/grafana
+    ports:
+      - "3000:3000"
