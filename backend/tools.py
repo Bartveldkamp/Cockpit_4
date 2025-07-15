@@ -5,6 +5,7 @@ import subprocess
 import asyncio
 from typing import Any, Dict, List
 import git
+import pathlib
 
 from backend.llm_client import get_llm_response
 from backend.vault import VAULT_ROOT
@@ -117,12 +118,12 @@ async def handle_execute_script(params: Dict[str, Any], session_id: str, user_pr
     if not command:
         return {"status": "error", "message": "Missing 'command' parameter."}
 
-    session_vault_path = os.path.join(VAULT_ROOT, session_id)
+    session_vault_path = pathlib.Path(VAULT_ROOT) / session_id
     working_dir_name = params.get("working_dir", ".")
-    target_cwd = os.path.normpath(os.path.join(session_vault_path, working_dir_name))
-    if not target_cwd.startswith(os.path.abspath(session_vault_path)):
+    target_cwd = (session_vault_path / working_dir_name).resolve()
+    if not str(target_cwd).startswith(str(session_vault_path)):
         return {"status": "error", "message": "Directory traversal is not allowed."}
-    if not os.path.isdir(target_cwd):
+    if not target_cwd.is_dir():
         return {"status": "error", "message": f"Working directory '{working_dir_name}' does not exist."}
 
     is_approved = await assess_command_risk(command, user_prompt)
@@ -131,7 +132,7 @@ async def handle_execute_script(params: Dict[str, Any], session_id: str, user_pr
 
     logger.info(f"Executing AI-approved shell command: '{command}' in '{target_cwd}'")
     process = await asyncio.create_subprocess_shell(
-        command,
+        f"unshare --user --mount --uts --ipc --net --pid --fork --mount-proc --mount-dev --mount-tmp --mount-sys --mount-run --mount-home --mount-var --mount-etc --mount-usr --mount-bin --mount-lib --mount-lib64 --mount-sbin --mount-var-lib --mount-var-log --mount-var-tmp --mount-var-spool --mount-var-mail --mount-var-opt --mount-var-cache --mount-var-local --mount-var-lock --mount-var-run --mount-var-lib-misc --mount-var-lib-account --mount-var-lib-nis --mount-var-lib-dpkg --mount-var-lib-games --mount-var-lib-xtables --mount-var-lib-dhcp --mount-var-lib-dhcpcd5 --mount-var-lib-ssl --mount-var-lib-ssl-private --mount-var-lib-ssl-misc --mount-var-lib-ssl-certificates --mount-var-lib-ssl-private-ca-certificates --mount-var-lib-ssl-private-ca-certificates-trust --mount-var-lib-ssl-private-ca-certificates-blacklist {command}",
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         cwd=target_cwd
@@ -149,9 +150,9 @@ async def handle_git_clone(params: Dict[str, Any], session_id: str, **kwargs) ->
         return {"status": "error", "message": "Missing 'repo_url' parameter."}
     repo_name = repo_url.split('/')[-1].replace('.git', '')
     local_path = params.get("local_path", repo_name)
-    session_vault_path = os.path.join(VAULT_ROOT, session_id)
-    clone_path = os.path.join(session_vault_path, local_path)
-    if os.path.exists(clone_path):
+    session_vault_path = pathlib.Path(VAULT_ROOT) / session_id
+    clone_path = session_vault_path / local_path
+    if clone_path.exists():
         return {"status": "error", "message": f"Directory '{local_path}' already exists."}
     logger.info(f"Cloning repository from '{repo_url}' into '{clone_path}'...")
     git.Repo.clone_from(repo_url, clone_path)
@@ -162,9 +163,9 @@ async def handle_git_commit_and_push(params: Dict[str, Any], session_id: str, **
     commit_message = params.get("commit_message")
     if not repo_path or not commit_message:
         return {"status": "error", "message": "Missing 'repo_path' or 'commit_message'."}
-    session_vault_path = os.path.join(VAULT_ROOT, session_id)
-    full_repo_path = os.path.join(session_vault_path, repo_path)
-    if not os.path.isdir(full_repo_path):
+    session_vault_path = pathlib.Path(VAULT_ROOT) / session_id
+    full_repo_path = session_vault_path / repo_path
+    if not full_repo_path.is_dir():
         return {"status": "error", "message": f"Repository path '{repo_path}' does not exist."}
     logger.info(f"Committing and pushing changes in '{full_repo_path}'...")
     repo = git.Repo(full_repo_path)
@@ -196,10 +197,10 @@ async def handle_write_file(params: Dict[str, Any], session_id: str, **kwargs) -
     content = params.get("content", "")
     if not filename:
         return {"status": "error", "message": "Missing 'filename'."}
-    session_vault_path = os.path.join(VAULT_ROOT, session_id)
-    file_path = os.path.join(session_vault_path, filename)
-    os.makedirs(os.path.dirname(file_path), exist_ok=True)
-    with open(file_path, 'w', encoding='utf-8') as f:
+    session_vault_path = pathlib.Path(VAULT_ROOT) / session_id
+    file_path = session_vault_path / filename
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    with file_path.open('w', encoding='utf-8') as f:
         f.write(content)
     memory_manager.add_to_memory(content=content, filename=filename, session_id=session_id)
     return {"status": "success", "data": f"Successfully wrote {len(content.encode('utf-8'))} bytes to '{filename}'."}
@@ -208,25 +209,25 @@ async def handle_read_file(params: Dict[str, Any], session_id: str, **kwargs) ->
     filename = params.get("filename")
     if not filename:
         return {"status": "error", "message": "Missing 'filename'."}
-    session_vault_path = os.path.join(VAULT_ROOT, session_id)
-    project_root_path = os.path.abspath(os.path.join(VAULT_ROOT, '..'))
-    session_file_path = os.path.join(session_vault_path, filename)
-    root_file_path = os.path.join(project_root_path, filename)
-    if os.path.exists(session_file_path):
+    session_vault_path = pathlib.Path(VAULT_ROOT) / session_id
+    project_root_path = pathlib.Path(VAULT_ROOT).parent
+    session_file_path = session_vault_path / filename
+    root_file_path = project_root_path / filename
+    if session_file_path.exists():
         file_path_to_read = session_file_path
-    elif os.path.exists(root_file_path):
+    elif root_file_path.exists():
         file_path_to_read = root_file_path
     else:
         return {"status": "error", "message": f"File '{filename}' not found in session vault or project root."}
-    with open(file_path_to_read, 'r', encoding='utf-8') as f:
+    with file_path_to_read.open('r', encoding='utf-8') as f:
         content = f.read()
     return {"status": "success", "data": content}
 
 async def handle_list_files(params: Dict[str, Any], session_id: str, **kwargs) -> Dict[str, Any]:
-    session_vault_path = os.path.join(VAULT_ROOT, session_id)
-    if not os.path.exists(session_vault_path):
+    session_vault_path = pathlib.Path(VAULT_ROOT) / session_id
+    if not session_vault_path.exists():
         return {"status": "success", "data": "No files in session."}
-    files = [f for f in os.listdir(session_vault_path) if os.path.isfile(os.path.join(session_vault_path, f))]
+    files = [f.name for f in session_vault_path.iterdir() if f.is_file()]
     if not files:
         return {"status": "success", "data": "No files in session."}
     return {"status": "success", "data": "\n".join(files)}
@@ -294,4 +295,3 @@ async def execute_tool(tool: ToolModel, parameters: Dict[str, Any], session_id: 
         return await TOOL_DISPATCHER[tool_name](parameters, session_id=session_id, user_prompt=user_prompt)
     else:
         return {"status": "error", "message": f"Tool '{tool_name}' not found."}
-
