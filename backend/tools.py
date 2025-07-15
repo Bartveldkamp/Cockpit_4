@@ -3,28 +3,27 @@ import json
 import logging
 import subprocess
 import asyncio
-from typing import Any, Dict, List
+from typing import Any, Dict, List, NamedTuple
 import git
 from pathlib import Path
-from pydantic import BaseModel, ValidationError
 
 from backend.llm_client import get_llm_response
 from backend.vault import VAULT_ROOT
 from backend.memory_manager import memory_manager
 from backend.config import settings
 from backend.schemas import ToolModel  # Ensure ToolModel is imported
-from backend.utils import retry_with_backoff  # Import the retry_with_backoff decorator
+from backend.utils import retry_with_backoff, SecurityDecision  # Import the retry_with_backoff decorator and SecurityDecision
 
 logger = logging.getLogger(__name__)
 
 # --- NEW AI SECURITY OFFICER ---
-async def assess_command_risk(command: str, user_prompt: str) -> Dict[str, Any]:
+async def assess_command(command: str, user_prompt: str) -> SecurityDecision:
     """Uses an LLM to assess if a shell command is safe to execute."""
     # Simple, fast pre-filter for obviously safe commands
     safe_commands = ["ls", "cat", "pwd", "pip list", "echo"]
     if any(command.strip().startswith(safe_cmd) for safe_cmd in safe_commands):
         logger.info(f"Command '{command}' passed pre-filter as safe.")
-        return {"is_safe": True, "reasoning": "Command passed pre-filter as safe."}
+        return SecurityDecision(is_safe=True, reasoning="Command passed pre-filter as safe.")
 
     logger.info(f"Engaging AI Security Officer to assess command: '{command}'")
 
@@ -44,15 +43,17 @@ async def assess_command_risk(command: str, user_prompt: str) -> Dict[str, Any]:
         temperature=0.0, max_tokens=50
     )
 
-    is_safe = "SAFE" in response.upper()
-    reasoning = response.split(" ", 1)[1] if is_safe else response.split(" ", 1)[1]
+    parts = response.strip().split(None, 1)
+    label = parts[0].upper()
+    reasoning = parts[1] if len(parts) > 1 else ""
+    is_safe = label == "SAFE"
 
     if is_safe:
         logger.info(f"Security Officer approved command: '{command}'")
     else:
         logger.warning(f"Security Officer REJECTED command: '{command}'")
 
-    return {"is_safe": is_safe, "reasoning": reasoning}
+    return SecurityDecision(is_safe=is_safe, reasoning=reasoning)
 
 # --- Tool Definitions ---
 def get_tool_definitions() -> List[Dict[str, Any]]:
@@ -126,10 +127,11 @@ def run_in_user_namespace(command: str, cwd: str) -> Dict[str, Any]:
         stderr=subprocess.PIPE,
         text=True
     )
-    if result.returncode == 0:
-        return {"status": "success", "data": result.stdout}
-    else:
-        return {"status": "error", "message": result.stderr, "exit_code": result.returncode}
+    return {
+        "status": "success" if result.returncode == 0 else "error",
+        "data": result.stdout if result.returncode == 0 else result.stderr,
+        "exit_code": result.returncode
+    }
 
 @retry_with_backoff(max_retries=3, base_delay=2.0, max_delay=10.0)
 async def handle_execute_script(params: Dict[str, Any], session_id: str, user_prompt: str, **kwargs) -> Dict[str, Any]:
@@ -145,9 +147,9 @@ async def handle_execute_script(params: Dict[str, Any], session_id: str, user_pr
     if not target_cwd.is_dir():
         return {"status": "error", "message": f"Working directory '{working_dir_name}' does not exist."}
 
-    risk_assessment = await assess_command_risk(command, user_prompt)
-    if not risk_assessment["is_safe"]:
-        return {"status": "error", "message": f"Execution of command '{command}' was denied by AI Security Officer. Reason: {risk_assessment['reasoning']}"}
+    risk_assessment = await assess_command(command, user_prompt)
+    if not risk_assessment.is_safe:
+        return {"status": "error", "message": f"Execution of command '{command}' was denied by AI Security Officer. Reason: {risk_assessment.reasoning}"}
 
     logger.info(f"Executing AI-approved shell command: '{command}' in '{target_cwd}'", extra={"session_id": session_id, "command": command})
 
@@ -156,8 +158,9 @@ async def handle_execute_script(params: Dict[str, Any], session_id: str, user_pr
     if result["status"] == "success":
         return {"status": "success", "data": result["data"]}
     else:
-        return {"status": "error", "message": result["message"], "exit_code": result["exit_code"]}
+        return {"status": "error", "message": result["data"], "exit_code": result["exit_code"]}
 
+@retry_with_backoff(max_retries=3, base_delay=2.0, max_delay=10.0)
 async def handle_git_clone(params: Dict[str, Any], session_id: str, **kwargs) -> Dict[str, Any]:
     repo_url = params.get("repo_url")
     if not repo_url:
@@ -172,6 +175,7 @@ async def handle_git_clone(params: Dict[str, Any], session_id: str, **kwargs) ->
     git.Repo.clone_from(repo_url, str(clone_path))
     return {"status": "success", "data": f"Successfully cloned repository into '{local_path}'."}
 
+@retry_with_backoff(max_retries=3, base_delay=2.0, max_delay=10.0)
 async def handle_git_commit_and_push(params: Dict[str, Any], session_id: str, **kwargs) -> Dict[str, Any]:
     repo_path = params.get("repo_path")
     commit_message = params.get("commit_message")
@@ -194,6 +198,7 @@ async def handle_git_commit_and_push(params: Dict[str, Any], session_id: str, **
         return {"status": "error", "message": f"Failed to push to remote: {error_summary}"}
     return {"status": "success", "data": f"Successfully committed and pushed changes with message: '{commit_message}'."}
 
+@retry_with_backoff(max_retries=3, base_delay=2.0, max_delay=10.0)
 async def handle_code_generation(params: Dict[str, Any], **kwargs) -> Dict[str, Any]:
     prompt = params.get("prompt")
     if not prompt:
