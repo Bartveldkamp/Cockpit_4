@@ -13,7 +13,7 @@ from backend.vault import VAULT_ROOT
 from backend.memory_manager import memory_manager
 from backend.config import settings
 from backend.schemas import ToolModel  # Ensure ToolModel is imported
-from backend.utils import retry_with_backoff
+from backend.utils import retry_with_backoff  # Import the retry_with_backoff decorator
 
 logger = logging.getLogger(__name__)
 
@@ -131,7 +131,7 @@ def run_in_user_namespace(command: str, cwd: str) -> Dict[str, Any]:
     else:
         return {"status": "error", "message": result.stderr, "exit_code": result.returncode}
 
-@retry_with_backoff(max_retries=3, backoff_factor=2.0, jitter=True)
+@retry_with_backoff(max_retries=3, base_delay=2.0, max_delay=10.0)
 async def handle_execute_script(params: Dict[str, Any], session_id: str, user_prompt: str, **kwargs) -> Dict[str, Any]:
     command = params.get("command")
     if not command:
