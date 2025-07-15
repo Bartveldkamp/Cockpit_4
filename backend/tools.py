@@ -37,7 +37,7 @@ async def assess_command_risk(command: str, user_prompt: str) -> bool:
     messages = [{"role": "system", "content": security_prompt}]
 
     response = await get_llm_response(
-        provider="mistral", model_name="mistral-large-latest", messages=messages,
+        provider="mistral", model_name=settings.mistral_model, messages=messages,
         temperature=0.0, max_tokens=5
     )
 
