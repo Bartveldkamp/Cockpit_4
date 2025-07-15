@@ -5,24 +5,26 @@ import subprocess
 import asyncio
 from typing import Any, Dict, List
 import git
-import pathlib
+from pathlib import Path
+from pydantic import BaseModel, ValidationError
 
 from backend.llm_client import get_llm_response
 from backend.vault import VAULT_ROOT
 from backend.memory_manager import memory_manager
 from backend.config import settings
 from backend.schemas import ToolModel  # Ensure ToolModel is imported
+from backend.utils import retry_with_backoff
 
 logger = logging.getLogger(__name__)
 
 # --- NEW AI SECURITY OFFICER ---
-async def assess_command_risk(command: str, user_prompt: str) -> bool:
+async def assess_command_risk(command: str, user_prompt: str) -> Dict[str, Any]:
     """Uses an LLM to assess if a shell command is safe to execute."""
     # Simple, fast pre-filter for obviously safe commands
     safe_commands = ["ls", "cat", "pwd", "pip list", "echo"]
     if any(command.strip().startswith(safe_cmd) for safe_cmd in safe_commands):
         logger.info(f"Command '{command}' passed pre-filter as safe.")
-        return True
+        return {"is_safe": True, "reasoning": "Command passed pre-filter as safe."}
 
     logger.info(f"Engaging AI Security Officer to assess command: '{command}'")
 
@@ -32,23 +34,25 @@ async def assess_command_risk(command: str, user_prompt: str) -> bool:
         "The command is 'UNSAFE' if it is destructive, tries to escalate privileges (`sudo`), or is clearly unrelated to the goal.\n\n"
         f"User's Goal: \"{user_prompt}\"\n"
         f"Command to Assess: \"{command}\"\n\n"
-        "Is this command SAFE or UNSAFE? Respond with ONLY the word SAFE or UNSAFE."
+        "Is this command SAFE or UNSAFE? Respond with ONLY the word SAFE or UNSAFE, followed by the reasoning."
     )
 
     messages = [{"role": "system", "content": security_prompt}]
 
     response = await get_llm_response(
         provider="mistral", model_name=settings.mistral_model, messages=messages,
-        temperature=0.0, max_tokens=5
+        temperature=0.0, max_tokens=50
     )
 
     is_safe = "SAFE" in response.upper()
+    reasoning = response.split(" ", 1)[1] if is_safe else response.split(" ", 1)[1]
+
     if is_safe:
         logger.info(f"Security Officer approved command: '{command}'")
     else:
         logger.warning(f"Security Officer REJECTED command: '{command}'")
 
-    return is_safe
+    return {"is_safe": is_safe, "reasoning": reasoning}
 
 # --- Tool Definitions ---
 def get_tool_definitions() -> List[Dict[str, Any]]:
@@ -113,36 +117,46 @@ async def handle_final_answer(params: Dict[str, Any], **kwargs) -> Dict[str, Any
     answer = params.get("answer", "I have processed the request.")
     return {"status": "success", "data": answer}
 
+def run_in_user_namespace(command: str, cwd: str) -> Dict[str, Any]:
+    """Run a command in a user namespace for stronger isolation."""
+    result = subprocess.run(
+        ["unshare", "-U", "-r", "-m", "--", "sh", "-c", command],
+        cwd=cwd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True
+    )
+    if result.returncode == 0:
+        return {"status": "success", "data": result.stdout}
+    else:
+        return {"status": "error", "message": result.stderr, "exit_code": result.returncode}
+
+@retry_with_backoff(max_retries=3, backoff_factor=2.0, jitter=True)
 async def handle_execute_script(params: Dict[str, Any], session_id: str, user_prompt: str, **kwargs) -> Dict[str, Any]:
     command = params.get("command")
     if not command:
         return {"status": "error", "message": "Missing 'command' parameter."}
 
-    session_vault_path = pathlib.Path(VAULT_ROOT) / session_id
+    session_vault_path = Path(VAULT_ROOT) / session_id
     working_dir_name = params.get("working_dir", ".")
     target_cwd = (session_vault_path / working_dir_name).resolve()
-    if not str(target_cwd).startswith(str(session_vault_path)):
+    if not target_cwd.is_relative_to(session_vault_path):
         return {"status": "error", "message": "Directory traversal is not allowed."}
     if not target_cwd.is_dir():
         return {"status": "error", "message": f"Working directory '{working_dir_name}' does not exist."}
 
-    is_approved = await assess_command_risk(command, user_prompt)
-    if not is_approved:
-        return {"status": "error", "message": f"Execution of command '{command}' was denied by AI Security Officer."}
+    risk_assessment = await assess_command_risk(command, user_prompt)
+    if not risk_assessment["is_safe"]:
+        return {"status": "error", "message": f"Execution of command '{command}' was denied by AI Security Officer. Reason: {risk_assessment['reasoning']}"}
 
-    logger.info(f"Executing AI-approved shell command: '{command}' in '{target_cwd}'")
-    process = await asyncio.create_subprocess_shell(
-        f"unshare --user --mount --uts --ipc --net --pid --fork --mount-proc --mount-dev --mount-tmp --mount-sys --mount-run --mount-home --mount-var --mount-etc --mount-usr --mount-bin --mount-lib --mount-lib64 --mount-sbin --mount-var-lib --mount-var-log --mount-var-tmp --mount-var-spool --mount-var-mail --mount-var-opt --mount-var-cache --mount-var-local --mount-var-lock --mount-var-run --mount-var-lib-misc --mount-var-lib-account --mount-var-lib-nis --mount-var-lib-dpkg --mount-var-lib-games --mount-var-lib-xtables --mount-var-lib-dhcp --mount-var-lib-dhcpcd5 --mount-var-lib-ssl --mount-var-lib-ssl-private --mount-var-lib-ssl-misc --mount-var-lib-ssl-certificates --mount-var-lib-ssl-private-ca-certificates --mount-var-lib-ssl-private-ca-certificates-trust --mount-var-lib-ssl-private-ca-certificates-blacklist {command}",
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        cwd=target_cwd
-    )
-    stdout, stderr = await process.communicate()
+    logger.info(f"Executing AI-approved shell command: '{command}' in '{target_cwd}'", extra={"session_id": session_id, "command": command})
 
-    if process.returncode == 0:
-        return {"status": "success", "data": stdout.decode().strip()}
+    result = run_in_user_namespace(command, str(target_cwd))
+
+    if result["status"] == "success":
+        return {"status": "success", "data": result["data"]}
     else:
-        return {"status": "error", "message": stderr.decode().strip(), "exit_code": process.returncode}
+        return {"status": "error", "message": result["message"], "exit_code": result["exit_code"]}
 
 async def handle_git_clone(params: Dict[str, Any], session_id: str, **kwargs) -> Dict[str, Any]:
     repo_url = params.get("repo_url")
@@ -150,12 +164,12 @@ async def handle_git_clone(params: Dict[str, Any], session_id: str, **kwargs) ->
         return {"status": "error", "message": "Missing 'repo_url' parameter."}
     repo_name = repo_url.split('/')[-1].replace('.git', '')
     local_path = params.get("local_path", repo_name)
-    session_vault_path = pathlib.Path(VAULT_ROOT) / session_id
+    session_vault_path = Path(VAULT_ROOT) / session_id
     clone_path = session_vault_path / local_path
     if clone_path.exists():
         return {"status": "error", "message": f"Directory '{local_path}' already exists."}
     logger.info(f"Cloning repository from '{repo_url}' into '{clone_path}'...")
-    git.Repo.clone_from(repo_url, clone_path)
+    git.Repo.clone_from(repo_url, str(clone_path))
     return {"status": "success", "data": f"Successfully cloned repository into '{local_path}'."}
 
 async def handle_git_commit_and_push(params: Dict[str, Any], session_id: str, **kwargs) -> Dict[str, Any]:
@@ -163,12 +177,12 @@ async def handle_git_commit_and_push(params: Dict[str, Any], session_id: str, **
     commit_message = params.get("commit_message")
     if not repo_path or not commit_message:
         return {"status": "error", "message": "Missing 'repo_path' or 'commit_message'."}
-    session_vault_path = pathlib.Path(VAULT_ROOT) / session_id
+    session_vault_path = Path(VAULT_ROOT) / session_id
     full_repo_path = session_vault_path / repo_path
     if not full_repo_path.is_dir():
         return {"status": "error", "message": f"Repository path '{repo_path}' does not exist."}
     logger.info(f"Committing and pushing changes in '{full_repo_path}'...")
-    repo = git.Repo(full_repo_path)
+    repo = git.Repo(str(full_repo_path))
     repo.git.add(A=True)
     if not repo.is_dirty(untracked_files=True):
         return {"status": "success", "data": "No changes to commit."}
@@ -197,7 +211,7 @@ async def handle_write_file(params: Dict[str, Any], session_id: str, **kwargs) -
     content = params.get("content", "")
     if not filename:
         return {"status": "error", "message": "Missing 'filename'."}
-    session_vault_path = pathlib.Path(VAULT_ROOT) / session_id
+    session_vault_path = Path(VAULT_ROOT) / session_id
     file_path = session_vault_path / filename
     file_path.parent.mkdir(parents=True, exist_ok=True)
     with file_path.open('w', encoding='utf-8') as f:
@@ -209,8 +223,8 @@ async def handle_read_file(params: Dict[str, Any], session_id: str, **kwargs) ->
     filename = params.get("filename")
     if not filename:
         return {"status": "error", "message": "Missing 'filename'."}
-    session_vault_path = pathlib.Path(VAULT_ROOT) / session_id
-    project_root_path = pathlib.Path(VAULT_ROOT).parent
+    session_vault_path = Path(VAULT_ROOT) / session_id
+    project_root_path = Path(VAULT_ROOT).resolve().parent
     session_file_path = session_vault_path / filename
     root_file_path = project_root_path / filename
     if session_file_path.exists():
@@ -224,7 +238,7 @@ async def handle_read_file(params: Dict[str, Any], session_id: str, **kwargs) ->
     return {"status": "success", "data": content}
 
 async def handle_list_files(params: Dict[str, Any], session_id: str, **kwargs) -> Dict[str, Any]:
-    session_vault_path = pathlib.Path(VAULT_ROOT) / session_id
+    session_vault_path = Path(VAULT_ROOT) / session_id
     if not session_vault_path.exists():
         return {"status": "success", "data": "No files in session."}
     files = [f.name for f in session_vault_path.iterdir() if f.is_file()]
