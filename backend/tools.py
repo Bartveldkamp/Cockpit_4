@@ -96,117 +96,146 @@ def get_tool_definitions() -> List[Dict[str, Any]]:
     ]
 
 # --- Tool Execution Logic ---
+async def handle_final_answer(params: Dict[str, Any], **kwargs) -> Dict[str, Any]:
+    answer = params.get("answer", "I have processed the request.")
+    return {"status": "success", "data": answer}
+
+async def handle_execute_script(params: Dict[str, Any], session_id: str, user_prompt: str, **kwargs) -> Dict[str, Any]:
+    command = params.get("command")
+    if not command:
+        return {"status": "error", "message": "Missing 'command' parameter."}
+
+    session_vault_path = os.path.join(VAULT_ROOT, session_id)
+    working_dir_name = params.get("working_dir", ".")
+    target_cwd = os.path.normpath(os.path.join(session_vault_path, working_dir_name))
+    if not target_cwd.startswith(os.path.abspath(session_vault_path)):
+        return {"status": "error", "message": "Directory traversal is not allowed."}
+    if not os.path.isdir(target_cwd):
+        return {"status": "error", "message": f"Working directory '{working_dir_name}' does not exist."}
+
+    is_approved = await assess_command_risk(command, user_prompt)
+    if not is_approved:
+        return {"status": "error", "message": f"Execution of command '{command}' was denied by AI Security Officer."}
+
+    logger.info(f"Executing AI-approved shell command: '{command}' in '{target_cwd}'")
+    process = await asyncio.create_subprocess_shell(
+        command,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        cwd=target_cwd
+    )
+    stdout, stderr = await process.communicate()
+
+    if process.returncode == 0:
+        return {"status": "success", "data": stdout.decode().strip()}
+    else:
+        return {"status": "error", "message": stderr.decode().strip(), "exit_code": process.returncode}
+
+async def handle_git_clone(params: Dict[str, Any], session_id: str, **kwargs) -> Dict[str, Any]:
+    repo_url = params.get("repo_url")
+    if not repo_url:
+        return {"status": "error", "message": "Missing 'repo_url' parameter."}
+    repo_name = repo_url.split('/')[-1].replace('.git', '')
+    local_path = params.get("local_path", repo_name)
+    session_vault_path = os.path.join(VAULT_ROOT, session_id)
+    clone_path = os.path.join(session_vault_path, local_path)
+    if os.path.exists(clone_path):
+        return {"status": "error", "message": f"Directory '{local_path}' already exists."}
+    logger.info(f"Cloning repository from '{repo_url}' into '{clone_path}'...")
+    git.Repo.clone_from(repo_url, clone_path)
+    return {"status": "success", "data": f"Successfully cloned repository into '{local_path}'."}
+
+async def handle_git_commit_and_push(params: Dict[str, Any], session_id: str, **kwargs) -> Dict[str, Any]:
+    repo_path = params.get("repo_path")
+    commit_message = params.get("commit_message")
+    if not repo_path or not commit_message:
+        return {"status": "error", "message": "Missing 'repo_path' or 'commit_message'."}
+    session_vault_path = os.path.join(VAULT_ROOT, session_id)
+    full_repo_path = os.path.join(session_vault_path, repo_path)
+    if not os.path.isdir(full_repo_path):
+        return {"status": "error", "message": f"Repository path '{repo_path}' does not exist."}
+    logger.info(f"Committing and pushing changes in '{full_repo_path}'...")
+    repo = git.Repo(full_repo_path)
+    repo.git.add(A=True)
+    if not repo.is_dirty(untracked_files=True):
+        return {"status": "success", "data": "No changes to commit."}
+    repo.index.commit(commit_message)
+    origin = repo.remote(name='origin')
+    push_info = origin.push()
+    if any(p.flags & git.PushInfo.ERROR for p in push_info):
+        error_summary = "\n".join([str(p.summary) for p in push_info if p.flags & git.PushInfo.ERROR])
+        return {"status": "error", "message": f"Failed to push to remote: {error_summary}"}
+    return {"status": "success", "data": f"Successfully committed and pushed changes with message: '{commit_message}'."}
+
+async def handle_code_generation(params: Dict[str, Any], **kwargs) -> Dict[str, Any]:
+    prompt = params.get("prompt")
+    if not prompt:
+        return {"status": "error", "message": "Missing 'prompt'."}
+    code_gen_system_prompt = "You are a code generation engine..."
+    code_string = await get_llm_response(
+        provider="mistral", model_name="codestral-latest",
+        messages=[{"role": "system", "content": code_gen_system_prompt}, {"role": "user", "content": prompt}],
+        temperature=0.0, top_p=1.0, max_tokens=4096, stop_tokens=[]
+    )
+    return {"status": "success", "data": code_string}
+
+async def handle_write_file(params: Dict[str, Any], session_id: str, **kwargs) -> Dict[str, Any]:
+    filename = params.get("filename")
+    content = params.get("content", "")
+    if not filename:
+        return {"status": "error", "message": "Missing 'filename'."}
+    session_vault_path = os.path.join(VAULT_ROOT, session_id)
+    file_path = os.path.join(session_vault_path, filename)
+    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+    with open(file_path, 'w', encoding='utf-8') as f:
+        f.write(content)
+    memory_manager.add_to_memory(content=content, filename=filename, session_id=session_id)
+    return {"status": "success", "data": f"Successfully wrote {len(content.encode('utf-8'))} bytes to '{filename}'."}
+
+async def handle_read_file(params: Dict[str, Any], session_id: str, **kwargs) -> Dict[str, Any]:
+    filename = params.get("filename")
+    if not filename:
+        return {"status": "error", "message": "Missing 'filename'."}
+    session_vault_path = os.path.join(VAULT_ROOT, session_id)
+    project_root_path = os.path.abspath(os.path.join(VAULT_ROOT, '..'))
+    session_file_path = os.path.join(session_vault_path, filename)
+    root_file_path = os.path.join(project_root_path, filename)
+    if os.path.exists(session_file_path):
+        file_path_to_read = session_file_path
+    elif os.path.exists(root_file_path):
+        file_path_to_read = root_file_path
+    else:
+        return {"status": "error", "message": f"File '{filename}' not found in session vault or project root."}
+    with open(file_path_to_read, 'r', encoding='utf-8') as f:
+        content = f.read()
+    return {"status": "success", "data": content}
+
+async def handle_list_files(params: Dict[str, Any], session_id: str, **kwargs) -> Dict[str, Any]:
+    session_vault_path = os.path.join(VAULT_ROOT, session_id)
+    if not os.path.exists(session_vault_path):
+        return {"status": "success", "data": "No files in session."}
+    files = [f for f in os.listdir(session_vault_path) if os.path.isfile(os.path.join(session_vault_path, f))]
+    if not files:
+        return {"status": "success", "data": "No files in session."}
+    return {"status": "success", "data": "\n".join(files)}
+
+# Dispatch dictionary for tool execution
+TOOL_DISPATCHER = {
+    "final_answer": handle_final_answer,
+    "execute_script": handle_execute_script,
+    "git_clone": handle_git_clone,
+    "git_commit_and_push": handle_git_commit_and_push,
+    "code_generation": handle_code_generation,
+    "write_file": handle_write_file,
+    "read_file": handle_read_file,
+    "list_files": handle_list_files,
+}
+
 async def execute_tool(tool: ToolModel, parameters: Dict[str, Any], session_id: str, user_prompt: str) -> Dict[str, Any]:
     """Executes a tool and returns a standardized dictionary output."""
-    session_vault_path = os.path.join(VAULT_ROOT, session_id)
-    os.makedirs(session_vault_path, exist_ok=True)
-    project_root_path = os.path.abspath(os.path.join(VAULT_ROOT, '..'))
+    tool_name = tool.name
+    if tool_name in TOOL_DISPATCHER:
+        return await TOOL_DISPATCHER[tool_name](parameters, session_id=session_id, user_prompt=user_prompt)
+    else:
+        return {"status": "error", "message": f"Tool '{tool_name}' not found."}
 
-    try:
-        tool_name = tool.name
-        if tool_name == "final_answer":
-            answer = parameters.get("answer", "I have processed the request.")
-            return {"status": "success", "data": answer}
-
-        elif tool_name == "execute_script":
-            command = parameters.get("command")
-            if not command: return {"status": "error", "message": "Missing 'command' parameter."}
-
-            working_dir_name = parameters.get("working_dir", ".")
-            target_cwd = os.path.normpath(os.path.join(session_vault_path, working_dir_name))
-            if not target_cwd.startswith(os.path.abspath(session_vault_path)):
-                return {"status": "error", "message": "Directory traversal is not allowed."}
-            if not os.path.isdir(target_cwd):
-                return {"status": "error", "message": f"Working directory '{working_dir_name}' does not exist."}
-
-            is_approved = await assess_command_risk(command, user_prompt)
-            if not is_approved:
-                return {"status": "error", "message": f"Execution of command '{command}' was denied by AI Security Officer."}
-
-            logger.info(f"Executing AI-approved shell command: '{command}' in '{target_cwd}'")
-            process = await asyncio.create_subprocess_shell(
-                command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=target_cwd
-            )
-            stdout, stderr = await process.communicate()
-
-            if process.returncode == 0:
-                return {"status": "success", "data": stdout.decode().strip()}
-            else:
-                return {"status": "error", "message": stderr.decode().strip(), "exit_code": process.returncode}
-
-        elif tool_name == "git_clone":
-            repo_url = parameters.get("repo_url")
-            if not repo_url: return {"status": "error", "message": "Missing 'repo_url' parameter."}
-            repo_name = repo_url.split('/')[-1].replace('.git', '')
-            local_path = parameters.get("local_path", repo_name)
-            clone_path = os.path.join(session_vault_path, local_path)
-            if os.path.exists(clone_path): return {"status": "error", "message": f"Directory '{local_path}' already exists."}
-            logger.info(f"Cloning repository from '{repo_url}' into '{clone_path}'...")
-            git.Repo.clone_from(repo_url, clone_path)
-            return {"status": "success", "data": f"Successfully cloned repository into '{local_path}'."}
-
-        elif tool_name == "git_commit_and_push":
-            repo_path = parameters.get("repo_path")
-            commit_message = parameters.get("commit_message")
-            if not repo_path or not commit_message: return {"status": "error", "message": "Missing 'repo_path' or 'commit_message'."}
-            full_repo_path = os.path.join(session_vault_path, repo_path)
-            if not os.path.isdir(full_repo_path): return {"status": "error", "message": f"Repository path '{repo_path}' does not exist."}
-            logger.info(f"Committing and pushing changes in '{full_repo_path}'...")
-            repo = git.Repo(full_repo_path)
-            repo.git.add(A=True)
-            if not repo.is_dirty(untracked_files=True): return {"status": "success", "data": "No changes to commit."}
-            repo.index.commit(commit_message)
-            origin = repo.remote(name='origin')
-            push_info = origin.push()
-            if any(p.flags & git.PushInfo.ERROR for p in push_info):
-                error_summary = "\n".join([str(p.summary) for p in push_info if p.flags & git.PushInfo.ERROR])
-                return {"status": "error", "message": f"Failed to push to remote: {error_summary}"}
-            return {"status": "success", "data": f"Successfully committed and pushed changes with message: '{commit_message}'."}
-
-        elif tool_name == "code_generation":
-            prompt = parameters.get("prompt")
-            if not prompt: return {"status": "error", "message": "Missing 'prompt'."}
-            code_gen_system_prompt = "You are a code generation engine..."
-            code_string = await get_llm_response(
-                provider="mistral", model_name="codestral-latest",
-                messages=[{"role": "system", "content": code_gen_system_prompt}, {"role": "user", "content": prompt}],
-                temperature=0.0, top_p=1.0, max_tokens=4096, stop_tokens=[]
-            )
-            return {"status": "success", "data": code_string}
-
-        elif tool_name == "write_file":
-            filename = parameters.get("filename")
-            content = parameters.get("content", "")
-            if not filename: return {"status": "error", "message": "Missing 'filename'."}
-            file_path = os.path.join(session_vault_path, filename)
-            os.makedirs(os.path.dirname(file_path), exist_ok=True)
-            with open(file_path, 'w', encoding='utf-8') as f: f.write(content)
-            memory_manager.add_to_memory(content=content, filename=filename, session_id=session_id)
-            return {"status": "success", "data": f"Successfully wrote {len(content.encode('utf-8'))} bytes to '{filename}'."}
-
-        elif tool_name == "read_file":
-            filename = parameters.get("filename")
-            if not filename: return {"status": "error", "message": "Missing 'filename'."}
-            session_file_path = os.path.join(session_vault_path, filename)
-            root_file_path = os.path.join(project_root_path, filename)
-            if os.path.exists(session_file_path): file_path_to_read = session_file_path
-            elif os.path.exists(root_file_path): file_path_to_read = root_file_path
-            else: return {"status": "error", "message": f"File '{filename}' not found in session vault or project root."}
-            with open(file_path_to_read, 'r', encoding='utf-8') as f: content = f.read()
-            return {"status": "success", "data": content}
-
-        elif tool_name == "list_files":
-            if not os.path.exists(session_vault_path): return {"status": "success", "data": "No files in session."}
-            files = [f for f in os.listdir(session_vault_path) if os.path.isfile(os.path.join(session_vault_path, f))]
-            if not files: return {"status": "success", "data": "No files in session."}
-            return {"status": "success", "data": "\n".join(files)}
-
-        else:
-            return {"status": "error", "message": f"Tool '{tool_name}' not found."}
-
-    except Exception as e:
-        logger.error(f"Error in tool '{tool_name}': {e}", exc_info=True)
-        return {"status": "error", "message": f"An unexpected error occurred: {str(e)}"}
