@@ -1,0 +1,55 @@
+import pytest
+import json
+from unittest.mock import patch, AsyncMock
+
+# We now import the actual functions we will be calling
+from backend.agent_core import run_agent
+
+@pytest.mark.asyncio
+async def test_end_to_end_agent_execution():
+    """
+    Tests the run_agent function in complete isolation by mocking the LLM call.
+    This ensures the test is fast, deterministic, and free of network errors.
+    """
+    user_prompt = "Create a new Python project and set up a virtual environment."
+    session_id = "test-session-id"
+    chat_history = []
+
+    # This is the perfect JSON plan we want to test our agent with.
+    # We will tell our mock LLM to return this exact string.
+    mock_plan_json_string = json.dumps({
+        "plan": [
+            {
+                "tool": {"name": "execute_script"},
+                "parameters": {"command": "mkdir my_new_project"},
+                "reason": "Create a new directory for the Python project."
+            },
+            {
+                "tool": {"name": "execute_script"},
+                "parameters": {"command": "ls"},
+                "reason": "Verify the directory was created."
+            }
+        ]
+    })
+
+    # We use patch to replace the real get_llm_response with a mock.
+    # We tell the mock to return our perfect JSON string.
+    with patch('backend.agent_core.get_llm_response', new_callable=AsyncMock, return_value=mock_plan_json_string):
+
+        # --- Execute the agent ---
+        # The agent will now run without making any real API calls.
+        result = await run_agent(user_prompt, session_id, chat_history)
+
+        # --- Assertions ---
+        # These assertions verify that the agent ran successfully.
+
+        # 1. Print the final result for inspection
+        print(f"Final response from agent: {result['response']}")
+
+        # 2. The most important check: The response should NOT be an error.
+        assert "Invalid plan structure" not in result["response"]
+        assert "error" not in result["response"].lower()
+
+        # 3. The agent should return the output of the LAST tool call ("ls").
+        # The output of "ls" should contain the directory we created.
+        assert "my_new_project" in result["response"]
