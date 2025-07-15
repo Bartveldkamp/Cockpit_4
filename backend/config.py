@@ -4,6 +4,7 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     mistral_api_key: str
     mistral_api_url: str = "https://api.mistral.ai/v1/chat/completions"
+    mistral_model: str = "mistral-large-latest"
     max_retries: int = 2
     embedding_model: str = "all-MiniLM-L6-v2"
     chroma_path: str = "memory_db"
