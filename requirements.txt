@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+pydantic
+httpx
+tiktoken
+sentence-transformers
+chromadb
+gitpython
+prometheus-client
+pytest
+pytest-asyncio
