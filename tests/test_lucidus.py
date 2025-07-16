@@ -56,5 +56,3 @@ async def test_lucidus_verify_endpoint_exception():
             assert response.json() == {"detail": "Error during Lucidus verification: Verification failed"}
             mock_logger_error.assert_called_once_with("Error during Lucidus verification: Verification failed")
 
-            assert response.json() == {"detail": "Error during Lucidus verification: Verification failed"}
-            mock_logger_error.assert_called_once_with("Error during Lucidus verification: Verification failed")
