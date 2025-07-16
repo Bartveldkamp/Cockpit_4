@@ -26,3 +26,4 @@ async def lucidus_verify_endpoint(code_data: Dict[str, str]):
     except Exception as e:
         logger.error(f"Error during Lucidus verification: {e}")
         raise HTTPException(status_code=500, detail=f"Error during Lucidus verification: {e}")
+
