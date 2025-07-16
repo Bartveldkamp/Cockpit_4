@@ -3,7 +3,7 @@ from unittest.mock import patch, AsyncMock
 from backend.tools import handle_execute_script
 from backend.config import settings
 
-# We patch the VAULT_ROOT setting for all tests in this file
+# This fixture automatically uses a temporary path for VAULT_ROOT for all tests in this file
 @pytest.fixture(autouse=True)
 def override_vault_root(tmp_path):
     with patch('backend.tools.VAULT_ROOT', str(tmp_path)):
@@ -11,18 +11,18 @@ def override_vault_root(tmp_path):
 
 @pytest.mark.asyncio
 async def test_handle_execute_script_success(tmp_path):
-    # Setup a safe working environment for the test
+    # Setup a safe working environment for the test inside the temporary vault
     session_id = "test_session"
-    (tmp_path / session_id).mkdir()
+    (tmp_path / session_id).mkdir() # Create the session vault
     
     params = {"command": "echo 'hello world'", "working_dir": "."}
     user_prompt = "Test prompt"
 
-    # Mock the security checks to always pass for this test
+    # Mock the security officer to approve the command
     with patch('backend.tools.assess_command', new_callable=AsyncMock) as mock_assess:
         mock_assess.return_value = {"is_safe": True, "reasoning": "Test"}
         
-        # Mock the sandboxed run command
+        # Mock the sandboxed command execution
         with patch('backend.tools.run_in_user_namespace') as mock_run:
             mock_run.return_value = {"status": "success", "output": "hello world"}
 
@@ -40,7 +40,7 @@ async def test_handle_execute_script_security_denial(tmp_path):
     params = {"command": "rm -rf /", "working_dir": "."}
     user_prompt = "Test prompt"
 
-    # Mock the security checks to return UNSAFE
+    # Mock the security officer to deny the command
     with patch('backend.tools.assess_command', new_callable=AsyncMock) as mock_assess:
         mock_assess.return_value = {"is_safe": False, "reasoning": "Destructive command"}
 
