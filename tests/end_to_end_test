@@ -1,22 +1,16 @@
-import pytest
-import json
-from unittest.mock import patch, AsyncMock
+# tests/test_end_to_end.py
 
-# We now import the actual functions we will be calling
+import pytest
+from unittest.mock import patch, AsyncMock
+import json
 from backend.agent_core import run_agent
 
 @pytest.mark.asyncio
 async def test_end_to_end_agent_execution():
-    """
-    Tests the run_agent function in complete isolation by mocking the LLM call.
-    This ensures the test is fast, deterministic, and free of network errors.
-    """
     user_prompt = "Create a new Python project and set up a virtual environment."
     session_id = "test-session-id"
     chat_history = []
 
-    # This is the perfect JSON plan we want to test our agent with.
-    # We will tell our mock LLM to return this exact string.
     mock_plan_json_string = json.dumps({
         "plan": [
             {
@@ -32,24 +26,45 @@ async def test_end_to_end_agent_execution():
         ]
     })
 
-    # We use patch to replace the real get_llm_response with a mock.
-    # We tell the mock to return our perfect JSON string.
     with patch('backend.agent_core.get_llm_response', new_callable=AsyncMock, return_value=mock_plan_json_string):
-
-        # --- Execute the agent ---
-        # The agent will now run without making any real API calls.
         result = await run_agent(user_prompt, session_id, chat_history)
 
-        # --- Assertions ---
-        # These assertions verify that the agent ran successfully.
-
-        # 1. Print the final result for inspection
         print(f"Final response from agent: {result['response']}")
 
-        # 2. The most important check: The response should NOT be an error.
         assert "Invalid plan structure" not in result["response"]
         assert "error" not in result["response"].lower()
-
-        # 3. The agent should return the output of the LAST tool call ("ls").
-        # The output of "ls" should contain the directory we created.
         assert "my_new_project" in result["response"]
+
+# tests/test_tools.py
+
+import pytest
+from unittest.mock import patch, AsyncMock
+from backend.tools import handle_execute_script
+
+@pytest.mark.asyncio
+async def test_handle_execute_script():
+    params = {"command": "echo 'hello world'", "working_dir": "."}
+    session_id = "test_session"
+    user_prompt = "Test prompt"
+
+    with patch('backend.tools.run_in_user_namespace', new_callable=AsyncMock) as mock_run:
+        mock_run.return_value = {"status": "success", "data": "hello world"}
+
+        result = await handle_execute_script(params, session_id, user_prompt)
+
+        assert result["status"] == "success"
+        assert result["data"] == "hello world"
+
+@pytest.mark.asyncio
+async def test_handle_execute_script_error():
+    params = {"command": "invalid_command", "working_dir": "."}
+    session_id = "test_session"
+    user_prompt = "Test prompt"
+
+    with patch('backend.tools.run_in_user_namespace', new_callable=AsyncMock) as mock_run:
+        mock_run.return_value = {"status": "error", "message": "Command not allowed"}
+
+        result = await handle_execute_script(params, session_id, user_prompt)
+
+        assert result["status"] == "error"
+        assert result["message"] == "Command not allowed"
