@@ -1,7 +1,7 @@
 import json
 import logging
 from pathlib import Path
-from backend.config import settings  # Import settings to access embedding_model
+from backend.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +26,5 @@ class Vault:
             if "fact" in entry and "embedding" not in entry:
                 entry["embedding"] = embedding_model.encode(entry["fact"])
 
-# Initialize Vault and precompute embeddings
 vault = Vault()
 vault.precompute_embeddings(settings.embedding_model)
