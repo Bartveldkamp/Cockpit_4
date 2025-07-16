@@ -5,23 +5,35 @@ scrape_configs:
   - job_name: 'agent_core'
     static_configs:
       - targets: ['agent_core:5000']
+    labels:
+      service: 'agent_core'
 
   - job_name: 'llm_client'
     static_configs:
       - targets: ['llm_client:5001']
+    labels:
+      service: 'llm_client'
 
   - job_name: 'tools'
     static_configs:
       - targets: ['tools:5002']
+    labels:
+      service: 'tools'
 
   - job_name: 'memory_manager'
     static_configs:
       - targets: ['memory_manager:5003']
+    labels:
+      service: 'memory_manager'
 
   - job_name: 'database'
     static_configs:
       - targets: ['database:5004']
+    labels:
+      service: 'database'
 
   - job_name: 'vault'
     static_configs:
       - targets: ['vault:5005']
+    labels:
+      service: 'vault'
