@@ -6,7 +6,6 @@ from typing import List, Dict, Any, Optional
 
 from backend.config import settings
 
-# --- Initialization ---
 logger = logging.getLogger(__name__)
 try:
     tokenizer = tiktoken.get_encoding("cl100k_base")
@@ -14,17 +13,14 @@ except Exception:
     logger.warning("Could not initialize tiktoken, token counts will be unavailable.")
     tokenizer = None
 
-# --- Helper Functions ---
 def _count_tokens(text: str) -> int:
     if not tokenizer or not isinstance(text, str):
         return 0
     return len(tokenizer.encode(text))
 
-# Define MODEL_PRICES
 MODEL_PRICES = {
     "model1": {"input": 0.01, "output": 0.02},
     "model2": {"input": 0.015, "output": 0.025},
-    # Add other models and their prices here
 }
 
 def _print_metrics(model: str, input_tokens: int, output_tokens: int):
@@ -46,7 +42,6 @@ def _print_metrics(model: str, input_tokens: int, output_tokens: int):
     )
     print(metrics_str)
 
-# --- Core Function ---
 async def get_llm_response(
     provider: str, model_name: str, messages: List[Dict[str, Any]],
     temperature: float, top_p: Optional[float] = 1.0, max_tokens: Optional[int] = 4096,
@@ -69,7 +64,6 @@ async def get_llm_response(
     payload = {k: v for k, v in payload.items() if v is not None}
 
     try:
-        # Increased timeout to 300 seconds (5 minutes) for complex tasks.
         async with httpx.AsyncClient(timeout=300.0) as client:
             response = await client.post(api_url, headers=headers, json=payload)
             response.raise_for_status()
