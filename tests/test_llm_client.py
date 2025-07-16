@@ -24,7 +24,7 @@ def test_print_metrics(capsys):
     assert "Model: model1" in captured.out
     assert "Input Tokens: 1000" in captured.out
     assert "Output Tokens: 500" in captured.out
-    assert "Estimated Cost: $0.015000" in captured.out
+    assert "Estimated Cost: \$0.015000" in captured.out
 
 # Test for get_llm_response function
 @pytest.mark.asyncio
