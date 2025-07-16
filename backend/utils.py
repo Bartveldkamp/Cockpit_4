@@ -13,7 +13,6 @@ from backend.config import settings
 from backend.llm_client import get_llm_response
 from backend.schemas import PlanModel, StepModel
 
-
 logger = logging.getLogger(__name__)
 
 class SecurityDecision(NamedTuple):
@@ -21,7 +20,6 @@ class SecurityDecision(NamedTuple):
     reasoning: str
 
 def retry_with_backoff(max_retries: int, base_delay: float = 1.0, max_delay: float = 10.0):
-    """Decorator to retry an async function with exponential backoff and jitter."""
     def decorator(func):
         @wraps(func)
         async def wrapper(*args, **kwargs):
@@ -34,11 +32,11 @@ def retry_with_backoff(max_retries: int, base_delay: float = 1.0, max_delay: flo
                             f"[{func.__name__}] Failed after {attempt} attempts: {e}"
                         )
                         raise
-                    
+
                     exp_delay = base_delay * (2 ** attempt)
                     delay = min(exp_delay, max_delay)
                     jitter = random.uniform(0, delay / 4)
-                    
+
                     logger.warning(
                         f"[{func.__name__}] Attempt {attempt+1}/{max_retries+1} failed "
                         f"with error: {e!r}. Retrying in {delay + jitter:.2f}s."
@@ -48,7 +46,6 @@ def retry_with_backoff(max_retries: int, base_delay: float = 1.0, max_delay: flo
     return decorator
 
 def parse_json_from_response(response_str: str) -> Any:
-    """Finds the first '{' and the last '}' and parses everything in between."""
     try:
         first_brace = response_str.find('{')
         last_brace = response_str.rfind('}')
@@ -61,7 +58,6 @@ def parse_json_from_response(response_str: str) -> Any:
         return {"content": response_str}
 
 def substitute_placeholders(parameters: Dict[str, Any], results: Dict[int, Any]) -> Dict[str, Any]:
-    """Substitutes placeholders like <ref:step_1_result> in a tool's parameter dictionary."""
     if not isinstance(parameters, dict):
         return parameters
     output_params = parameters.copy()
@@ -78,7 +74,6 @@ def substitute_placeholders(parameters: Dict[str, Any], results: Dict[int, Any])
     return output_params
 
 def plan_sanity_check(plan: List[StepModel], user_prompt: str) -> (bool, str):
-    """Verifies that filenames used in the plan were not hallucinated."""
     prompt_filenames = set(re.findall(r'[`"]?([\w\.\-\_\/]+?\.(?:py|json|txt|md|sh|yaml|yml))[`"]?', user_prompt))
     if not prompt_filenames:
         return True, ""
@@ -92,7 +87,6 @@ def plan_sanity_check(plan: List[StepModel], user_prompt: str) -> (bool, str):
     return True, ""
 
 async def validate_plan_semantically(plan_list: List[Dict[str, Any]], user_prompt: str, correlation_id: str) -> (bool, str, List[Dict[str, Any]]):
-    """Uses an LLM to check if a plan is logically sound."""
     logger.info("Engaging Plan Critic for semantic validation.")
     critic_system_prompt = "You are a 'Plan Critic' AI. Evaluate the provided JSON plan based on the user's goal for logic and efficiency. If the plan is sound, respond ONLY with the word OK. If it is flawed, respond ONLY with a corrected, complete, and valid JSON plan object."
     plan_str = json.dumps({"plan": plan_list}, indent=2)
@@ -110,9 +104,9 @@ async def validate_plan_semantically(plan_list: List[Dict[str, Any]], user_promp
         try:
             corrected_plan_data = parse_json_from_response(response_str)
             if "plan" in corrected_plan_data:
-                PlanModel(**corrected_plan_data) # Validate the corrected plan
+                PlanModel(**corrected_plan_data)
                 return True, "Plan was corrected by Critic.", corrected_plan_data['plan']
-            else: 
+            else:
                 return False, "Critic provided an invalid correction format.", plan_list
         except (ValidationError, json.JSONDecodeError) as e:
             logger.error(f"Critic's corrected plan was invalid: {e}")
