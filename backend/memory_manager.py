@@ -8,10 +8,7 @@ from backend.config import settings
 logger = logging.getLogger(__name__)
 
 class MemoryManager:
-    """Handles the agent's long-term memory using a vector database."""
-
     def __init__(self):
-        """Initializes the MemoryManager, loading the embedding model and database."""
         try:
             self.model = SentenceTransformer(settings.embedding_model)
             self._db_client = chromadb.PersistentClient(path=settings.chroma_path)
@@ -23,13 +20,11 @@ class MemoryManager:
             self.collection = None
 
     def add_to_memory(self, content: str, filename: str, session_id: str):
-        """Adds a file's content to the long-term memory."""
         if not self.model or not self.collection:
             logger.error("Cannot add to memory, MemoryManager not initialized.")
             return
 
         try:
-            # The document ID must be unique. We'll use session_id + filename.
             doc_id = f"{session_id}:{filename}"
             embedding = self.model.encode(content).tolist()
 
@@ -44,7 +39,6 @@ class MemoryManager:
             logger.error(f"Failed to add '{filename}' to memory: {e}", exc_info=True)
 
     def retrieve_from_memory(self, query_text: str, n_results: int = 3) -> List[str]:
-        """Retrieves the most relevant documents from memory based on a query."""
         if not self.model or not self.collection or not query_text:
             return []
 
@@ -62,6 +56,4 @@ class MemoryManager:
             logger.error(f"Failed to retrieve from memory: {e}", exc_info=True)
             return []
 
-# Create a single, global instance of the MemoryManager
 memory_manager = MemoryManager()
-
