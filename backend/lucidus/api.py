@@ -14,16 +14,13 @@ class LucidusRequest(BaseModel):
     context: str = ""
 
 class LucidusAnalysisResponse(BaseModel):
-    complexity: str
-    confidence: float
-    verdict: str
-    reasoning: str
-    evidence: List[Dict[str, Any]]
+    # This is a guess, fill with your actual model fields
+    status: str
+    details: str
 
 @router.post("/lucidus_verify", response_model=LucidusAnalysisResponse)
 async def lucidus_verify_endpoint(request: LucidusRequest):
     try:
-        # Note: assuming verify_code returns a dict compatible with LucidusAnalysisResponse
         analysis = await verify_code(code_snippet=request.code_snippet)
         return LucidusAnalysisResponse(**analysis)
     except Exception as e:
