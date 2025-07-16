@@ -1,8 +1,10 @@
+import logging  # <-- ADDED
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Dict, Any, List
 from .verification import verify_code
 
+logger = logging.getLogger(__name__)  # <-- ADDED
 router = APIRouter()
 
 class LucidusAnalysisResponse(BaseModel):
