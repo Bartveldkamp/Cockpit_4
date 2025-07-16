@@ -1,4 +1,4 @@
-iimport pytest
+import pytest
 import json
 from unittest.mock import patch, AsyncMock
 from backend.agent_core import run_agent
@@ -104,3 +104,4 @@ async def test_run_agent_max_retries_exceeded():
                                 result = await run_agent(user_prompt, session_id, chat_history)
 
                                 assert "Agent failed after 1 attempts. Last error: Execution stopped at step 1" in result['response']
+
