@@ -5,11 +5,12 @@ import json
 from unittest.mock import patch, AsyncMock
 from backend.agent_core import run_agent
 
-# We patch the VAULT_ROOT setting to use a temporary directory for this test
+# This fixture patches the VAULT_ROOT for the test to use a temporary directory
 @pytest.fixture(autouse=True)
 def override_settings(tmp_path):
+    # Patch the vault location for both tools and any other module that might use it
     with patch('backend.tools.VAULT_ROOT', str(tmp_path)):
-        with patch('backend.agent_core.settings.max_retries', 1): # Faster tests
+        with patch('backend.agent_core.settings.max_retries', 1): # Speeds up tests
              yield
 
 @pytest.mark.asyncio
@@ -18,26 +19,27 @@ async def test_end_to_end_agent_execution(tmp_path):
     session_id = "test-e2e-session"
     chat_history = []
     
-    # The agent will create its session vault inside tmp_path
-    # This automatically passes the security checks.
+    # By using tmp_path, the agent will create its session vault inside a safe
+    # temporary directory, which automatically passes the security checks.
 
-    # 1. Mock the Plan Critic to always approve the plan
+    # Mock the Plan Critic to always approve the plan
     with patch('backend.utils.validate_plan_semantically') as mock_critic:
-        # The critic returns (is_logical, comment, plan_list)
-        # We mock it to simply approve the plan it receives.
         mock_critic.side_effect = lambda plan_list, *args, **kwargs: (True, "Test approval", plan_list)
 
-        # 2. Mock the Security Officer to always approve the command
+        # Mock the Security Officer to always approve the command
         with patch('backend.tools.assess_command', new_callable=AsyncMock) as mock_assess:
             mock_assess.return_value = {"is_safe": True, "reasoning": "Test"}
             
-            # 3. Mock the actual execution to prevent real file system changes
+            # Mock the actual shell command to prevent real file system changes
             with patch('backend.tools.run_in_user_namespace') as mock_run:
-                mock_run.return_value = {"status": "success", "output": "Directory created."}
+                # We simulate the successful output of the 'mkdir' command
+                mock_run.return_value = {"status": "success", "output": ""}
 
                 # --- Execute the agent ---
                 result = await run_agent(user_prompt, session_id, chat_history, correlation_id="test-e2e")
                 
                 # --- Assertions ---
                 print(f"Final response from agent: {result['response']}")
-                assert result['response'] == "Directory created."
+                assert "error" not in result["response"].lower()
+                # A successful mkdir command returns an empty string
+                assert result['response'] == ""
