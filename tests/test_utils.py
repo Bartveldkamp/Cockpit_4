@@ -1,7 +1,7 @@
 import pytest
 import asyncio
 from unittest.mock import patch, AsyncMock
-from backend.retry_with_backoff import retry_with_backoff, SecurityDecision
+from backend.utils import retry_with_backoff, SecurityDecision
 
 @pytest.mark.asyncio
 async def test_retry_with_backoff_success_first_attempt():
@@ -42,7 +42,7 @@ async def test_retry_with_backoff_logging():
     async def failing_function():
         raise Exception("Temporary failure")
 
-    with patch('backend.retry_with_backoff.logger.warning') as mock_warning:
+    with patch('backend.utils.logger.warning') as mock_warning:
         with pytest.raises(Exception, match="Temporary failure"):
             await failing_function()
 
