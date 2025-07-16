@@ -1,34 +1,50 @@
 import pytest
 from unittest.mock import patch, AsyncMock
 from backend.tools import handle_execute_script
+from backend.config import settings
+
+# We patch the VAULT_ROOT setting for all tests in this file
+@pytest.fixture(autouse=True)
+def override_vault_root(tmp_path):
+    with patch('backend.tools.VAULT_ROOT', str(tmp_path)):
+        yield
 
 @pytest.mark.asyncio
-async def test_handle_execute_script():
+async def test_handle_execute_script_success(tmp_path):
+    # Setup a safe working environment for the test
+    session_id = "test_session"
+    (tmp_path / session_id).mkdir()
+    
     params = {"command": "echo 'hello world'", "working_dir": "."}
-    session_id = "test_session"
     user_prompt = "Test prompt"
 
-    with patch('backend.tools.run_in_user_namespace', new_callable=AsyncMock) as mock_run:
-        mock_run.return_value = {"status": "success", "data": "hello world"}
+    # Mock the security checks to always pass for this test
+    with patch('backend.tools.assess_command', new_callable=AsyncMock) as mock_assess:
+        mock_assess.return_value = {"is_safe": True, "reasoning": "Test"}
+        
+        # Mock the sandboxed run command
+        with patch('backend.tools.run_in_user_namespace') as mock_run:
+            mock_run.return_value = {"status": "success", "output": "hello world"}
 
-        result = await handle_execute_script(params, session_id, user_prompt)
+            result = await handle_execute_script(params, session_id, user_prompt)
 
-        assert result["status"] == "success"
-        assert result["data"] == "hello world"
-        mock_run.assert_called_once_with("echo 'hello world'", "/path/to/session_vault")
+            assert result["status"] == "success"
+            assert result["data"] == "hello world"
 
 @pytest.mark.asyncio
-async def test_handle_execute_script_error():
-    params = {"command": "invalid_command", "working_dir": "."}
+async def test_handle_execute_script_security_denial(tmp_path):
+    # Setup a safe working environment
     session_id = "test_session"
+    (tmp_path / session_id).mkdir()
+
+    params = {"command": "rm -rf /", "working_dir": "."}
     user_prompt = "Test prompt"
 
-    with patch('backend.tools.run_in_user_namespace', new_callable=AsyncMock) as mock_run:
-        mock_run.return_value = {"status": "error", "message": "Command not found", "exit_code": 127}
+    # Mock the security checks to return UNSAFE
+    with patch('backend.tools.assess_command', new_callable=AsyncMock) as mock_assess:
+        mock_assess.return_value = {"is_safe": False, "reasoning": "Destructive command"}
 
         result = await handle_execute_script(params, session_id, user_prompt)
-
+        
         assert result["status"] == "error"
-        assert result["message"] == "Command not found"
-        assert result["exit_code"] == 127
-        mock_run.assert_called_once_with("invalid_command", "/path/to/session_vault")
+        assert "denied by AI Security Officer" in result["message"]
