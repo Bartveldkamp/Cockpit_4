@@ -1,45 +1,31 @@
 # tests/test_end_to_end.py
-
 import pytest
 import json
 from unittest.mock import patch, AsyncMock
 from backend.agent_core import run_agent
 
-# This fixture patches the VAULT_ROOT for the test to use a temporary directory
 @pytest.fixture(autouse=True)
 def override_settings(tmp_path):
-    # Patch the vault location for both tools and any other module that might use it
     with patch('backend.tools.VAULT_ROOT', str(tmp_path)):
-        with patch('backend.agent_core.settings.max_retries', 1): # Speeds up tests
+        with patch('backend.agent_core.settings.max_retries', 1):
              yield
 
 @pytest.mark.asyncio
 async def test_end_to_end_agent_execution(tmp_path):
     user_prompt = "Create a new directory called 'my_test_project'."
     session_id = "test-e2e-session"
-    chat_history = []
     
-    # By using tmp_path, the agent will create its session vault inside a safe
-    # temporary directory, which automatically passes the security checks.
-
-    # Mock the Plan Critic to always approve the plan
-    with patch('backend.utils.validate_plan_semantically') as mock_critic:
-        mock_critic.side_effect = lambda plan_list, *args, **kwargs: (True, "Test approval", plan_list)
-
-        # Mock the Security Officer to always approve the command
-        with patch('backend.tools.assess_command', new_callable=AsyncMock) as mock_assess:
-            mock_assess.return_value = {"is_safe": True, "reasoning": "Test"}
-            
-            # Mock the actual shell command to prevent real file system changes
-            with patch('backend.tools.run_in_user_namespace') as mock_run:
-                # We simulate the successful output of the 'mkdir' command
-                mock_run.return_value = {"status": "success", "output": ""}
-
-                # --- Execute the agent ---
-                result = await run_agent(user_prompt, session_id, chat_history, correlation_id="test-e2e")
-                
-                # --- Assertions ---
-                print(f"Final response from agent: {result['response']}")
-                assert "error" not in result["response"].lower()
-                # A successful mkdir command returns an empty string
-                assert result['response'] == ""
+    with patch('backend.agent_core.memory_manager.retrieve_from_memory', return_value=[]):
+        with patch('backend.utils.validate_plan_semantically') as mock_critic:
+            mock_critic.side_effect = lambda plan_list, *args, **kwargs: (True, "Test approval", plan_list)
+            with patch('backend.tools.assess_command', new_callable=AsyncMock) as mock_assess:
+                mock_assess.return_value = {"is_safe": True, "reasoning": "Test"}
+                with patch('backend.tools.run_in_user_namespace') as mock_run:
+                    mock_run.return_value = {"status": "success", "output": ""}
+                    with patch('backend.agent_core.get_llm_response', new_callable=AsyncMock) as mock_llm:
+                        mock_llm.return_value = json.dumps({
+                            "plan": [{"tool": {"name": "execute_script"}, "parameters": {"command": f"mkdir {tmp_path}/{session_id}/my_test_project"}, "reason": "Test"}]
+                        })
+                        result = await run_agent(user_prompt, session_id, [])
+                        print(f"Final response from agent: {result['response']}")
+                        assert result['response'] == ""
