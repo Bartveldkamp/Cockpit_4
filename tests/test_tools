@@ -2,7 +2,7 @@
 import pytest
 from unittest.mock import patch, AsyncMock
 from backend.tools import handle_execute_script
-from backend.config import settings
+from backend.utils import SecurityDecision
 
 @pytest.fixture(autouse=True)
 def override_vault_root(tmp_path):
@@ -18,7 +18,7 @@ async def test_handle_execute_script_success(tmp_path):
     user_prompt = "Test prompt"
 
     with patch('backend.tools.assess_command', new_callable=AsyncMock) as mock_assess:
-        mock_assess.return_value = {"is_safe": True, "reasoning": "Test"}
+        mock_assess.return_value = SecurityDecision(is_safe=True, reasoning="Test")
         with patch('backend.tools.run_in_user_namespace') as mock_run:
             mock_run.return_value = {"status": "success", "output": "hello world"}
 
@@ -35,7 +35,7 @@ async def test_handle_execute_script_security_denial(tmp_path):
     user_prompt = "Test prompt"
 
     with patch('backend.tools.assess_command', new_callable=AsyncMock) as mock_assess:
-        mock_assess.return_value = {"is_safe": False, "reasoning": "Destructive command"}
+        mock_assess.return_value = SecurityDecision(is_safe=False, reasoning="Destructive command")
 
         result = await handle_execute_script(params, session_id, user_prompt)
         
