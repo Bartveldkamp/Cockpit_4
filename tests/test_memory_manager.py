@@ -1,12 +1,12 @@
 import pytest
 from unittest.mock import patch, MagicMock
-from backend.memory import MemoryManager
+from backend.memory_manager import MemoryManager
 
 @pytest.fixture
 def mock_memory_manager():
-    with patch('backend.memory.SentenceTransformer') as MockSentenceTransformer:
-        with patch('backend.memory.chromadb.PersistentClient') as MockPersistentClient:
-            with patch('backend.memory.settings') as MockSettings:
+    with patch('backend.memory_manager.SentenceTransformer') as MockSentenceTransformer:
+        with patch('backend.memory_manager.chromadb.PersistentClient') as MockPersistentClient:
+            with patch('backend.memory_manager.settings') as MockSettings:
                 MockSettings.embedding_model = 'test-model'
                 MockSettings.chroma_path = 'test-path'
                 MockSettings.collection_name = 'test-collection'
@@ -39,7 +39,7 @@ def test_add_to_memory(mock_memory_manager):
 
 def test_add_to_memory_failure(mock_memory_manager):
     mock_memory_manager.model = None
-    with patch('backend.memory.logger.error') as mock_logger_error:
+    with patch('backend.memory_manager.logger.error') as mock_logger_error:
         mock_memory_manager.add_to_memory("test content", "test_file.txt", "session123")
         mock_logger_error.assert_called_once_with("Cannot add to memory, MemoryManager not initialized.")
 
@@ -58,16 +58,15 @@ def test_retrieve_from_memory_empty_query(mock_memory_manager):
 
 def test_retrieve_from_memory_failure(mock_memory_manager):
     mock_memory_manager.collection.query.side_effect = Exception("Query failed")
-    with patch('backend.memory.logger.error') as mock_logger_error:
+    with patch('backend.memory_manager.logger.error') as mock_logger_error:
         results = mock_memory_manager.retrieve_from_memory("query text")
         assert results == []
         mock_logger_error.assert_called_once_with("Failed to retrieve from memory: Query failed")
 
 def test_memory_manager_initialization_failure():
-    with patch('backend.memory.SentenceTransformer', side_effect=Exception("Initialization failed")):
-        with patch('backend.memory.logger.error') as mock_logger_error:
+    with patch('backend.memory_manager.SentenceTransformer', side_effect=Exception("Initialization failed")):
+        with patch('backend.memory_manager.logger.error') as mock_logger_error:
             memory_manager = MemoryManager()
             assert memory_manager.model is None
             assert memory_manager.collection is None
             mock_logger_error.assert_called_once_with("Failed to initialize MemoryManager: Initialization failed", exc_info=True)
-
