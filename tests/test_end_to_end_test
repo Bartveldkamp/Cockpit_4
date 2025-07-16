@@ -7,6 +7,7 @@ from backend.utils import SecurityDecision
 
 @pytest.fixture(autouse=True)
 def override_settings(tmp_path):
+    # This fixture provides a safe, temporary directory for tests
     with patch('backend.tools.VAULT_ROOT', str(tmp_path)):
         with patch('backend.agent_core.settings.max_retries', 1):
              yield
@@ -16,6 +17,7 @@ async def test_end_to_end_agent_execution(tmp_path):
     user_prompt = "Create a new directory called 'my_test_project'."
     session_id = "test-e2e-session"
     
+    # This test now mocks all external dependencies for a true unit test
     with patch('backend.agent_core.memory_manager.retrieve_from_memory', return_value=[]):
         with patch('backend.utils.validate_plan_semantically') as mock_critic:
             mock_critic.side_effect = lambda plan_list, *args, **kwargs: (True, "Test approval", plan_list)
@@ -24,6 +26,7 @@ async def test_end_to_end_agent_execution(tmp_path):
                 with patch('backend.tools.run_in_user_namespace') as mock_run:
                     mock_run.return_value = {"status": "success", "output": "Directory created."}
                     with patch('backend.agent_core.get_llm_response', new_callable=AsyncMock) as mock_llm:
+                        # We mock the LLM to return a plan that uses the safe working directory
                         mock_llm.return_value = json.dumps({
                             "plan": [{"tool": {"name": "execute_script"}, "parameters": {"command": "mkdir my_test_project", "working_dir": "."}, "reason": "Test"}]
                         })
