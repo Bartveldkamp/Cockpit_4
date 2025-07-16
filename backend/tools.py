@@ -11,15 +11,12 @@ from backend.llm_client import get_llm_response
 from backend.vault import VAULT_ROOT
 from backend.memory_manager import memory_manager
 from backend.config import settings
-from backend.schemas import ToolModel  # Ensure ToolModel is imported
-from backend.utils import retry_with_backoff, SecurityDecision  # Import the retry_with_backoff decorator and SecurityDecision
+from backend.schemas import ToolModel
+from backend.utils import retry_with_backoff, SecurityDecision
 
 logger = logging.getLogger(__name__)
 
-# --- NEW AI SECURITY OFFICER ---
 async def assess_command(command: str, user_prompt: str) -> SecurityDecision:
-    """Uses an LLM to assess if a shell command is safe to execute."""
-    # Simple, fast pre-filter for obviously safe commands
     safe_commands = ["ls", "cat", "pwd", "pip list", "echo"]
     if any(command.strip().startswith(safe_cmd) for safe_cmd in safe_commands):
         logger.info(f"Command '{command}' passed pre-filter as safe.")
@@ -55,9 +52,7 @@ async def assess_command(command: str, user_prompt: str) -> SecurityDecision:
 
     return SecurityDecision(is_safe=is_safe, reasoning=reasoning)
 
-# --- Tool Definitions ---
 def get_tool_definitions() -> List[Dict[str, Any]]:
-    """Returns the schema for all available tools."""
     return [
         {
             "name": "final_answer",
@@ -113,13 +108,11 @@ def get_tool_definitions() -> List[Dict[str, Any]]:
         },
     ]
 
-# --- Tool Execution Logic ---
 async def handle_final_answer(params: Dict[str, Any], **kwargs) -> Dict[str, Any]:
     answer = params.get("answer", "I have processed the request.")
     return {"status": "success", "data": answer}
 
 def run_in_user_namespace(command: str, cwd: str) -> Dict[str, Any]:
-    """Run a command in a user namespace for stronger isolation."""
     result = subprocess.run(
         ["unshare", "-U", "-r", "-m", "--", "sh", "-c", command],
         cwd=cwd,
@@ -252,23 +245,18 @@ async def handle_list_files(params: Dict[str, Any], session_id: str, **kwargs) -
     return {"status": "success", "data": "\n".join(files)}
 
 async def handle_refactor_code(params: Dict[str, Any], session_id: str, **kwargs) -> Dict[str, Any]:
-    """
-    Handles the logic for reading, refactoring, and writing back a code file.
-    """
     filename = params.get("filename")
     refactoring_prompt = params.get("refactoring_prompt")
 
     if not filename or not refactoring_prompt:
         return {"status": "error", "message": "Missing 'filename' or 'refactoring_prompt'."}
 
-    # Step 1: Read the existing file content using our other tool's logic
     read_result = await handle_read_file({"filename": filename}, session_id=session_id)
     if read_result["status"] == "error":
-        return read_result # Pass the error through
+        return read_result
 
     original_code = read_result["data"]
 
-    # Step 2: Use the code_generation tool logic to perform the refactoring
     full_prompt = (
         f"Please refactor the following code based on the instruction provided.\n\n"
         f"INSTRUCTION: {refactoring_prompt}\n\n"
@@ -282,19 +270,16 @@ async def handle_refactor_code(params: Dict[str, Any], session_id: str, **kwargs
 
     refactored_code = generation_result["data"]
 
-    # Step 3: Write the refactored code back to the original file
     write_result = await handle_write_file(
         {"filename": filename, "content": refactored_code},
         session_id=session_id
     )
 
-    # Return the result from the final write operation
     if write_result["status"] == "success":
         return {"status": "success", "data": f"Successfully refactored and saved '{filename}'."}
     else:
         return write_result
 
-# Dispatch dictionary for tool execution
 TOOL_DISPATCHER = {
     "final_answer": handle_final_answer,
     "execute_script": handle_execute_script,
@@ -304,11 +289,10 @@ TOOL_DISPATCHER = {
     "write_file": handle_write_file,
     "read_file": handle_read_file,
     "list_files": handle_list_files,
-    "refactor_code": handle_refactor_code,  # <-- ADD THIS LINE
+    "refactor_code": handle_refactor_code,
 }
 
 async def execute_tool(tool: ToolModel, parameters: Dict[str, Any], session_id: str, user_prompt: str) -> Dict[str, Any]:
-    """Executes a tool and returns a standardized dictionary output."""
     tool_name = tool.name
     if tool_name in TOOL_DISPATCHER:
         return await TOOL_DISPATCHER[tool_name](parameters, session_id=session_id, user_prompt=user_prompt)
