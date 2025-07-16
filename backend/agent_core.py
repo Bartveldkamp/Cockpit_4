@@ -133,4 +133,3 @@ async def run_agent(
     final_error_message = f"Agent failed after {max_retries} attempts. Last error: {execution_error}"
     full_history.append({"role": "assistant", "content": final_error_message})
     return {"response": final_error_message, "full_history": full_history}
-
