@@ -5,13 +5,11 @@ from typing import List, Dict, Any
 from backend.config import settings
 
 def get_db_connection():
-    """Establishes a connection to the SQLite database."""
     conn = sqlite3.connect(settings.database_file)
     conn.row_factory = sqlite3.Row
     return conn
 
 def create_tables():
-    """Creates the necessary tables if they do not already exist."""
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
@@ -33,7 +31,6 @@ def create_tables():
         conn.commit()
 
 def save_chat_history(session_id: str, history: List[Dict[str, Any]]):
-    """Saves the chat history for a given session."""
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("INSERT OR IGNORE INTO sessions (session_id) VALUES (?)", (session_id,))
@@ -49,7 +46,6 @@ def save_chat_history(session_id: str, history: List[Dict[str, Any]]):
         conn.commit()
 
 def load_chat_history(session_id: str) -> List[Dict[str, Any]]:
-    """Loads the chat history for a given session."""
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(
@@ -68,7 +64,6 @@ def load_chat_history(session_id: str) -> List[Dict[str, Any]]:
         return history
 
 def clear_session_history(session_id: str):
-    """Clears the chat history for a given session."""
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("DELETE FROM chat_history WHERE session_id = ?", (session_id,))
