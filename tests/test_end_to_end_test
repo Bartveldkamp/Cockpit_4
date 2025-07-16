@@ -3,6 +3,7 @@ import pytest
 import json
 from unittest.mock import patch, AsyncMock
 from backend.agent_core import run_agent
+from backend.utils import SecurityDecision
 
 @pytest.fixture(autouse=True)
 def override_settings(tmp_path):
@@ -19,13 +20,13 @@ async def test_end_to_end_agent_execution(tmp_path):
         with patch('backend.utils.validate_plan_semantically') as mock_critic:
             mock_critic.side_effect = lambda plan_list, *args, **kwargs: (True, "Test approval", plan_list)
             with patch('backend.tools.assess_command', new_callable=AsyncMock) as mock_assess:
-                mock_assess.return_value = {"is_safe": True, "reasoning": "Test"}
+                mock_assess.return_value = SecurityDecision(is_safe=True, reasoning="Test")
                 with patch('backend.tools.run_in_user_namespace') as mock_run:
-                    mock_run.return_value = {"status": "success", "output": ""}
+                    mock_run.return_value = {"status": "success", "output": "Directory created."}
                     with patch('backend.agent_core.get_llm_response', new_callable=AsyncMock) as mock_llm:
                         mock_llm.return_value = json.dumps({
-                            "plan": [{"tool": {"name": "execute_script"}, "parameters": {"command": f"mkdir {tmp_path}/{session_id}/my_test_project"}, "reason": "Test"}]
+                            "plan": [{"tool": {"name": "execute_script"}, "parameters": {"command": "mkdir my_test_project", "working_dir": "."}, "reason": "Test"}]
                         })
                         result = await run_agent(user_prompt, session_id, [])
                         print(f"Final response from agent: {result['response']}")
-                        assert result['response'] == ""
+                        assert result['response'] == "Directory created."
