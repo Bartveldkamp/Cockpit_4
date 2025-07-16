@@ -2,7 +2,9 @@ version: '3.8'
 
 services:
   agent_core:
-    build: ./backend
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.agent_core
     ports:
       - "5000:5000"
     environment:
@@ -13,33 +15,89 @@ services:
       - memory_manager
       - database
       - vault
+    networks:
+      - backend_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   llm_client:
-    build: ./backend
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.llm_client
     ports:
       - "5001:5001"
     environment:
       - MISTRAL_API_KEY=${MISTRAL_API_KEY}
+    networks:
+      - backend_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   tools:
-    build: ./backend
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.tools
     ports:
       - "5002:5002"
+    networks:
+      - backend_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   memory_manager:
-    build: ./backend
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.memory_manager
     ports:
       - "5003:5003"
+    networks:
+      - backend_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5003/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   database:
-    build: ./backend
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.database
     ports:
       - "5004:5004"
+    volumes:
+      - db_data:/var/lib/sqlite
+    networks:
+      - backend_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5004/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   vault:
-    build: ./backend
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.vault
     ports:
       - "5005:5005"
+    volumes:
+      - vault_data:/vault_data
+    networks:
+      - backend_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5005/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   prometheus:
     image: prom/prometheus
@@ -47,8 +105,20 @@ services:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
     ports:
       - "9090:9090"
+    networks:
+      - backend_network
 
   grafana:
     image: grafana/grafana
     ports:
       - "3000:3000"
+    networks:
+      - backend_network
+
+networks:
+  backend_network:
+    driver: bridge
+
+volumes:
+  db_data:
+  vault_data:
