@@ -57,4 +57,3 @@ def test_settings_partial_env():
         assert settings.collection_name == "project_memory"
         assert settings.vault_root == os.path.join(os.path.dirname(__file__), '..', 'vault_data')
         assert settings.database_file == "cockpit.db"
-
