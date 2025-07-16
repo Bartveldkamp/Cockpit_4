@@ -1,5 +1,5 @@
 # backend/lucidus/api.py
-import logging
+iimport logging
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Dict, Any, List
@@ -14,7 +14,6 @@ class LucidusRequest(BaseModel):
     context: str = ""
 
 class LucidusAnalysisResponse(BaseModel):
-    # This is a guess, fill with your actual model fields
     status: str
     details: str
 
