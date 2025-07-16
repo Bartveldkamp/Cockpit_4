@@ -1,31 +1,57 @@
+# tests/test_tools.py
 import pytest
 from unittest.mock import patch, AsyncMock
 from backend.tools import handle_execute_script
+from backend.utils import SecurityDecision
+
+# This pytest fixture automatically provides a temporary directory (tmp_path)
+# and tells the tools module to use it as the main vault.
+@pytest.fixture(autouse=True)
+def override_vault_root(tmp_path):
+    with patch('backend.tools.VAULT_ROOT', str(tmp_path)):
+        yield
 
 @pytest.mark.asyncio
-async def test_handle_execute_script():
+async def test_handle_execute_script_success(tmp_path):
+    # Setup a safe working environment for the test inside the temporary vault
+    session_id = "test_session"
+    (tmp_path / session_id).mkdir() # Create the session vault
+    
+    # We tell the tool to run inside the vault by using "." as the working_dir
     params = {"command": "echo 'hello world'", "working_dir": "."}
-    session_id = "test_session"
     user_prompt = "Test prompt"
 
-    with patch('backend.tools.run_in_user_namespace', new_callable=AsyncMock) as mock_run:
-        mock_run.return_value = {"status": "success", "data": "hello world"}
+    # We mock the security checks to simulate an approval
+    with patch('backend.tools.assess_command', new_callable=AsyncMock) as mock_assess:
+        mock_assess.return_value = SecurityDecision(is_safe=True, reasoning="Test")
+        
+        # We mock the actual command execution to see if the function works
+        with patch('backend.tools.run_in_user_namespace') as mock_run:
+            mock_run.return_value = {"status": "success", "output": "hello world"}
 
-        result = await handle_execute_script(params, session_id, user_prompt)
+            # Execute the function with our test setup
+            result = await handle_execute_script(params, session_id, user_prompt)
 
-        assert result["status"] == "success"
-        assert result["data"] == "hello world"
+            # Assert that the function returned a success status
+            assert result["status"] == "success"
+            assert result["data"] == "hello world"
 
 @pytest.mark.asyncio
-async def test_handle_execute_script_error():
-    params = {"command": "invalid_command", "working_dir": "."}
+async def test_handle_execute_script_error(tmp_path):
+    # Setup a safe working environment
     session_id = "test_session"
+    (tmp_path / session_id).mkdir()
+
+    # Even for a test of a failing command, it must be in a safe directory
+    params = {"command": "invalid_command", "working_dir": "."}
     user_prompt = "Test prompt"
 
-    with patch('backend.tools.run_in_user_namespace', new_callable=AsyncMock) as mock_run:
-        mock_run.return_value = {"status": "error", "message": "Command not found", "exit_code": 127}
+    with patch('backend.tools.assess_command', new_callable=AsyncMock) as mock_assess:
+        mock_assess.return_value = SecurityDecision(is_safe=True, reasoning="Test")
+        with patch('backend.tools.run_in_user_namespace') as mock_run:
+            mock_run.return_value = {"status": "error", "output": "Command not found", "exit_code": 127}
+            
+            result = await handle_execute_script(params, session_id, user_prompt)
 
-        result = await handle_execute_script(params, session_id, user_prompt)
-
-        assert result["status"] == "error"
-        assert result["message"] == "Command not found"
+            assert result["status"] == "error"
+            assert result["message"] == "Command not found"
