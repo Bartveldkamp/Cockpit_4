@@ -12,3 +12,4 @@ async def verify_code(code_snippet: str, context: str) -> dict:
         "reasoning": "The code is safe.",
         "evidence": [{"detail": "No issues found"}]
     }
+
